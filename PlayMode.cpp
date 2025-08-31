@@ -51,6 +51,8 @@ PlayMode::PlayMode() {
 	 * PALETTES
 	 * TODO: Palettes are also pngs, use load_png to convert to color format.
 	 *       Assumes palette is already sorted
+	 * 		 (with the exception of "eeeeee" leading if present,
+	 * 		  as that marks transparency)
 	 *********************************************************************************/
 	std::ifstream palettes ("assets/palettes.png");
 	glm::uvec2 *palette_sheet_size = new glm::uvec2(4, 4);
