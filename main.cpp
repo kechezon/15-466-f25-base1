@@ -94,7 +94,7 @@ int main(int argc, char **argv) {
 	//Set VSYNC + Late Swap (prevents crazy FPS):
 	if (!SDL_GL_SetSwapInterval(-1)) {
 		std::cerr << "NOTE: couldn't set vsync + late swap tearing (" << SDL_GetError() << ")." << std::endl;
-		if (!SDL_GL_SetSwapInterval(1)) {
+		if (!SDL_GL_SetSwapInterval(1)) { // 0 = ASAP, 1 = wait for the next vertical link, -1 = adaptive vsync
 			std::cerr << "NOTE: couldn't set vsync (" << SDL_GetError() << ")." << std::endl;
 		}
 	}
@@ -164,13 +164,13 @@ int main(int argc, char **argv) {
 
 		{ //(2) call the current mode's "update" function to deal with elapsed time:
 			auto current_time = std::chrono::high_resolution_clock::now();
-			static auto previous_time = current_time;
+			static auto previous_time = current_time; // static in this context prevents re-initialization
 			float elapsed = std::chrono::duration< float >(current_time - previous_time).count();
 			previous_time = current_time;
 
 			//if frames are taking a very long time to process,
 			//lag to avoid spiral of death:
-			elapsed = std::min(0.1f, elapsed);
+			elapsed = std::min(0.1f, elapsed); // aka, just lie lol
 
 			Mode::current->update(elapsed);
 			if (!Mode::current) break;

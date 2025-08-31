@@ -35,6 +35,7 @@ struct PPU466 {
 	//Palette:
 	// The PPU uses 2-bit indexed color;
 	// thus, a color palette has four entries.
+	// the vector in question is rgba, so you have 4 rgba values in a palette
 	typedef std::array< glm::u8vec4, 4 > Palette;
 	// Each color in a Palette can be any RGBA color.
 	// For a "true NES" experience, you should set:
@@ -56,6 +57,9 @@ struct PPU466 {
 	//  bit0_at_2_7 = (tile.bit0[7] >> 2) & 1;
 	//  bit1_at_2_7 = (tile.bit1[7] >> 2) & 1;
 	//  color_index_at_2_7 = (bit1_at_2_7 << 1) | bit0_at_2_7;
+	// 
+	// How to use: I know the pixel of the tile I want (pixel x, y),
+	//			   so I get the xth bit of element y, for bits 0 and 1
 	struct Tile {
 		std::array< uint8_t, 8 > bit0; //<-- controls bit 0 of the color index
 		std::array< uint8_t, 8 > bit1; //<-- controls bit 1 of the color index

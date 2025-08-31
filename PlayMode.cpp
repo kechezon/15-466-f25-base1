@@ -1,4 +1,6 @@
 #include "PlayMode.hpp"
+#include "Load.hpp"
+#include "load_save_png.hpp"
 
 //for the GL_ERRORS() macro:
 #include "gl_errors.hpp"
@@ -7,6 +9,8 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <random>
+#include <iostream>
+#include <fstream>
 
 PlayMode::PlayMode() {
 	//TODO:
@@ -16,9 +20,56 @@ PlayMode::PlayMode() {
 	//  make yourself a script that spits out the code that you paste in here
 	//   and check that script into your repository.
 
+	PPU466:PPU466 ppu = PPU466();
+
+	/***********************************************************************************
+	 * TILES
+	 * 
+	 * Based on code provided by Jim McCann.
+	 * Sprite sheet contains:
+	 * - Player sprites (Carnelia the Bunny needs two 8x8 hardware sprites)
+	 * - GemStar sprite (1?)
+	 * - Gem Sprites (each Gem is comprised of four hardware sprites)
+	 * - Enemy Sprites (one sprite each)
+	 * - Bullet Sprites (one sprite each)
+	 **********************************************************************************/
+	std::ifstream spritesheet ("assets/spritesheet.png", std::ios::binary);
+	/****************************************************
+	 * TODO:
+	 * 1) Scan and get spritesheet data into an array
+	 * 2) Do index math to get "png tiles" (8x8 blocks)
+	 * 3) Calculate Palette Indices:
+	 *    a) put tiles into buckets based on colors found
+	 *    b) if a tile has no conflicting colors with a bucket,
+	 *       it goes in that bucket (bucket gets updated). Create buckets as needed
+	 *    c) Go through each bucket and assign each color a number 0-3 (sorted, transparent is 0)
+	 *    d) Create tiles based on number
+	************************************************/
+	spritesheet.read(reinterpret_cast<char*>(ppu.tile_table.data()), sizeof(ppu.tile_table.data()));
+
+	/*********************************************************************************
+	 * PALETTES
+	 * TODO: Palettes are also pngs, use load_png to convert to color format.
+	 *       Assumes palette is already sorted
+	 *********************************************************************************/
+	std::ifstream palettes ("assets/palettes.png");
+	glm::uvec2 *palette_sheet_size = new glm::uvec2(4, 4);
+	std::vector< glm::u8vec4 > *palette_data;
+	load_save_png:load_png("assets/palettes/spritework", palette_sheet_size, palette_data, OriginLocation::UpperLeftOrigin);
+	
+	/**********************************
+	 * Sprite (entity) lists
+	 **********************************/
+	std::array<PPU466::Sprite, 4> playerSprites; // includes gemstar and cursor
+												// (array since it will be fixed size)
+	std::array<PPU466::Sprite, 16> gemSprites; // there will be at most 4 gems in play
+											   // which are 4 hardware sprites each   
+	std::vector<PPU466::Sprite> enemySprites; // vector since this can be variable
+	std::vector<PPU466::Sprite> bulletSprites; // vector since this can be variable
+
 	//Also, *don't* use these tiles in your game:
 
-	{ //use tiles 0-16 as some weird dot pattern thing:
+	/*{ //use tiles 0-16 as some weird dot pattern thing:
 		std::array< uint8_t, 8*8 > distance;
 		for (uint32_t y = 0; y < 8; ++y) {
 			for (uint32_t x = 0; x < 8; ++x) {
@@ -100,7 +151,7 @@ PlayMode::PlayMode() {
 		glm::u8vec4(0x88, 0x88, 0xff, 0xff),
 		glm::u8vec4(0x00, 0x00, 0x00, 0xff),
 		glm::u8vec4(0x00, 0x00, 0x00, 0x00),
-	};
+	};*/
 
 }
 
@@ -150,7 +201,7 @@ void PlayMode::update(float elapsed) {
 
 	//slowly rotates through [0,1):
 	// (will be used to set background color)
-	background_fade += elapsed / 10.0f;
+	background_fade += elapsed / 10.0f; // frames and time do not match!
 	background_fade -= std::floor(background_fade);
 
 	constexpr float PlayerSpeed = 30.0f;
@@ -186,25 +237,32 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 		}
 	}
 
-	//background scroll:
-	ppu.background_position.x = int32_t(-0.5f * player_at.x);
-	ppu.background_position.y = int32_t(-0.5f * player_at.y);
+	/******************************************************************
+	 * TODO: Things to draw:
+	 * 0) Background (theoretically shouldn't be changing)
+	 * 1) Player (ppu sprites 0-9). These sprites all need some offset
+	 * 2) Enemy Crystals (up to four at once, )
+	 ******************************************************************/
 
-	//player sprite:
-	ppu.sprites[0].x = int8_t(player_at.x);
-	ppu.sprites[0].y = int8_t(player_at.y);
-	ppu.sprites[0].index = 32;
-	ppu.sprites[0].attributes = 7;
+	// //background scroll:
+	// ppu.background_position.x = int32_t(-0.5f * player_at.x);
+	// ppu.background_position.y = int32_t(-0.5f * player_at.y);
 
-	//some other misc sprites:
-	for (uint32_t i = 1; i < 63; ++i) {
-		float amt = (i + 2.0f * background_fade) / 62.0f;
-		ppu.sprites[i].x = int8_t(0.5f * float(PPU466::ScreenWidth) + std::cos( 2.0f * M_PI * amt * 5.0f + 0.01f * player_at.x) * 0.4f * float(PPU466::ScreenWidth));
-		ppu.sprites[i].y = int8_t(0.5f * float(PPU466::ScreenHeight) + std::sin( 2.0f * M_PI * amt * 3.0f + 0.01f * player_at.y) * 0.4f * float(PPU466::ScreenWidth));
-		ppu.sprites[i].index = 32;
-		ppu.sprites[i].attributes = 6;
-		if (i % 2) ppu.sprites[i].attributes |= 0x80; //'behind' bit
-	}
+	// //player sprite:
+	// ppu.sprites[0].x = int8_t(player_at.x);
+	// ppu.sprites[0].y = int8_t(player_at.y);
+	// ppu.sprites[0].index = 32;
+	// ppu.sprites[0].attributes = 7;
+
+	// //some other misc sprites:
+	// for (uint32_t i = 1; i < 63; ++i) {
+	// 	float amt = (i + 2.0f * background_fade) / 62.0f;
+	// 	ppu.sprites[i].x = int8_t(0.5f * float(PPU466::ScreenWidth) + std::cos( 2.0f * M_PI * amt * 5.0f + 0.01f * player_at.x) * 0.4f * float(PPU466::ScreenWidth));
+	// 	ppu.sprites[i].y = int8_t(0.5f * float(PPU466::ScreenHeight) + std::sin( 2.0f * M_PI * amt * 3.0f + 0.01f * player_at.y) * 0.4f * float(PPU466::ScreenWidth));
+	// 	ppu.sprites[i].index = 32;
+	// 	ppu.sprites[i].attributes = 6;
+	// 	if (i % 2) ppu.sprites[i].attributes |= 0x80; //'behind' bit
+	// }
 
 	//--- actually draw ---
 	ppu.draw(drawable_size);
