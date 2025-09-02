@@ -110,10 +110,6 @@ struct Gem {
     uint8_t shape; // 0-3
 };
 
-
-typedef std::array< std::array< glm::u8vec4 , 8 >, 8 > ColoredTile;
-typedef std::unordered_map< glm::u8vec4, uint8_t > PaletteBucket;
-
 std::array<PPU466::Sprite, 4> playerSprites; // includes gemstar and cursor
 											 // (array since it will be fixed size)
 std::array<PPU466::Sprite, 16> gemSprites; // there will be at most 4 gems in play
@@ -188,7 +184,7 @@ bool palette_match(std::vector<glm::u8vec4> colors, std::vector<glm::u8vec4> cmp
 /*****************************
  * Asset Pipeline Functions
  *****************************/
-void process_tiles(PPU466* ppu) {
+void process_tiles() {
 	/***********************************************************************************
 	 * TILES
 	 * Based on code provided by Jim McCann.
@@ -208,22 +204,22 @@ void process_tiles(PPU466* ppu) {
 	//1) Scan for data
 	const uint64_t spritesheet_dimensions = 64*48;
 	const uint64_t tile_count = 46;
-	const uint64_t true_pixel_count = (64*48);
+	// const uint64_t true_pixel_count = (64*48);
 	glm::uvec2 *spritesheet_size = new glm::uvec2(64, 48);
-	std::vector< glm::u8vec4 > *raw_tile_pixels;
+	std::vector< glm::u8vec4 > raw_tile_pixels;
 
 	// ColoredTile holds color info rather than palette index info (we'll use it to construct the palette info for the tile)
 	std::array< ColoredTile, tile_count > colored_tiles;
-	load_save_png:load_png("assets/palettes/spritesheet.png", spritesheet_size, raw_tile_pixels, OriginLocation::UpperLeftOrigin);
+	load_png("assets/spritesheet.png", spritesheet_size, &raw_tile_pixels, OriginLocation::UpperLeftOrigin);
 
 	// 2) Index math
-	for (uint64_t r = 0; r < true_pixel_count / 8; r++) {
+	for (uint64_t r = 0; r < spritesheet_dimensions / 8; r++) {
 		// 8-pixel row by 8-pixel row, assign to the right tile
 		std::array< glm::u8vec4, 8 > pixel_row;
 		
 		// go across the pixels and get the row
 		for (int p = 0; p < 8; p++) {
-			pixel_row[p] = (*raw_tile_pixels)[(8 * r) + p];
+			pixel_row[p] = raw_tile_pixels[(8 * r) + p];
 		}
 
 		// then, assign the pixel row to the right tile:
@@ -239,78 +235,128 @@ void process_tiles(PPU466* ppu) {
 		}
 	}
 
+	// DEBUG print tiles
+	// for (uint64_t i = 0; i < tile_count; i++) {
+	// 	ColoredTile tile = colored_tiles[i];
+	// 	printf("TILE %llu:\n", i);
+	// 	for (uint64_t r = 0; r < 8; r++) {
+	// 		printf("{");
+	// 		std::array<glm::u8vec4, 8> row = tile[r];
+	// 		for (uint64_t c = 0; c < 8; c++) {
+	// 			printf("(%x, %x, %x, %x) ~ ", row[c].x, row[c].y, row[c].z, row[c].w);
+	// 		}
+	// 		printf("}\n");
+	// 	}
+
+	// 	printf("\n");
+	// }
+
 	// 3) Palette indices
 	// mapping of rgba -> number is a bucket
-	// technically an ordering, but easier to use unordered_map
-	std::vector<PaletteBucket> palette_buckets = {};
-	std::unordered_map<ColoredTile, PaletteBucket*> tile_palette_map = {}; // used to assign palette indices
+	std::array<PaletteBucket, tile_count> palette_buckets;
+	std::unordered_map< uint64_t, uint64_t > tile_palette_map = {}; // used to assign palette indices (color index to palette index)
+	uint64_t buckets_made = 0;
 	for (uint64_t t = 0; t < tile_count; t++) {
 		ColoredTile tile = colored_tiles[t];
 
 		// a) get the colors of the tile
-		std::vector<glm::u8vec4> colors; 
+		std::unordered_set<uint32_t> colors; 
 		for (auto row : tile) {
 			for (uint8_t p = 0; p < 8; p++)
-				colors.emplace_back(tile[p]);
+				colors.emplace((row[p].x << 24) + (row[p].y << 16) + (row[p].z << 8) + row[p].w);
 		}
+		std::vector<glm::u8vec4> color_keys = {};
+		for (uint32_t color : colors) {
+			color_keys.emplace_back(glm::u8vec4((color >> 24) & 0xff,
+									 			(color >> 16) & 0xff,
+									 			(color >> 8) & 0xff,
+									  			 color & 0xff));
+		}
+
+		// DEBUG what colors were found?
+		// printf("Found %llu colors in tile %llu: { ~ ", color_keys.size(), t);
+		// for (int i = 0; i < color_keys.size(); i++) {
+		// 	printf("(%u, %u, %u, %u) ~ ", color_keys[i].x, color_keys[i].y, color_keys[i].z, color_keys[i].w);
+		// }
+		// printf("}\n");
 
 		// b) determine which PaletteBucket it goes in, and add to the tile_palette_map
 		//	  (update buckets as necessary)
 
 		// to compare palettes against the current
-		std::vector<PaletteBucket> palettes;
-		for (auto [tile, bucket] : tile_palette_map) {
-			palettes.emplace_back(bucket);
-		}
+		// std::vector<PaletteBucket> palettes;
+		// for (auto [key, bucket] : tile_palette_map) {
+		// 	palettes.emplace_back(bucket);
+		// }
 		
 		// compare `colors` to each palette
-		for (uint64_t p = 0; p < palettes.size(); p++) {
-			PaletteBucket bucket = palettes[p];
-			std::vector<glm::u8vec4> cmpPalette = {};
-			for (auto [color, num] : bucket)
-				cmpPalette.emplace_back(color);
+		bool bucket_found = false;
+		for (uint64_t p = 0; p < palette_buckets.size(); p++) {
+			PaletteBucket bucket = palette_buckets[p];
 
-			if (palette_match(colors, cmpPalette)) // first palette to match, map the 
-			{
-				// the larger palette is what the tiles are mapped to
-				if (cmpPalette.size() < colors.size())
-				{
-					// update the bucket with the colors in `colors`
-					for (auto color : colors)
-						bucket.emplace(color);
+			if (bucket.size() > 0) {
+				std::vector<glm::u8vec4> cmpPalette = {};
+				for (auto color_vec : bucket) {
+					cmpPalette.emplace_back(color_vec);
 				}
-				tile_palette_map.emplace(tile, bucket);
-				break;
+
+				if (palette_match(color_keys, cmpPalette)) // first palette to match, map
+				{
+					bucket_found = true;
+					// the larger palette is what the tiles are mapped to
+					if (cmpPalette.size() < colors.size())
+					{
+						// update the bucket with the colors in `colors`
+						// for (auto color : colors) {
+							palette_buckets[p] = color_keys;
+							// uint32_t color_bytes = (color[0] << 24) + (color[1] << 16) + (color[2] << 8) + color[3];
+							// bucket[color_bytes] = (uint8_t)bucket.size();
+				// 		}
+					}
+					tile_palette_map[t] = p;
+					break;
+				}
 			}
+		}
+
+		if (!bucket_found) {
+			palette_buckets[buckets_made] = color_keys;
+			tile_palette_map[t] = buckets_made;
+			buckets_made++;
 		}
 	}
 
-	for (PaletteBucket bucket : palette_buckets) {
+	for (uint64_t b = 0; b < buckets_made; b++) {
+		PaletteBucket bucket = palette_buckets[b];
 		// c) Go through each bucket and reassign numbers
 		// get keys
-		std::vector<glm::u8vec4> keys;
-		for (auto [color, num] : bucket) {
-			keys.emplace_back(color);
-		}
+		// std::vector<glm::u8vec4> keys;
+		// for (auto [color, num] : bucket) {
+		// 	keys.emplace_back(color);
+		// }
 
 		// sort and remap
-		for (uint8_t i = 0; i < 4; i++) {
+		for (uint8_t i = 0; i < 3; i++) {
 			for (uint8_t j = i; j < 4; j++) {
-				if (color_compare(keys[j], keys[i]) < 0 || (keys[j][0] == 0xee && keys[j][1] == 0xee && keys[j][2] == 0xee)) {
-					glm::uvec4 temp = keys[i];
-					keys[i] = keys[j];
-					keys[j] = temp;
+				if (color_compare(bucket[j], bucket[i]) < 0 || (bucket[j].x == 0xee && bucket[j].y == 0xee && bucket[j].z == 0xee)) {
+					glm::uvec4 temp = bucket[i];
+					bucket[i] = bucket[j];
+					bucket[j] = temp;
 				}
 			}
-			bucket[keys[i]] = i;
+			// uint32_t color_bytes = (keys[i][3] << 24) + (keys[i][2] << 16) + (keys[i][1] << 8) + keys[i][0];
+			// bucket[color_bytes] = i;
 		}
 	}
+
 
 	for (uint64_t t = 0; t < tile_count; t++) {
 		// static_assert(tile_palette_map.contains(tile_colors[t]), "Colored tile %lu was added to the tp map");
 		// d) construct tile
 		ColoredTile tile = colored_tiles[t];
-		PaletteBucket palette_bucket = *(tile_palette_map[tile]); // color->int
+		uint64_t palette_index = tile_palette_map[t];
+		// printf("Tile %zu -> Palette %zu.\n", t, palette_index);
+		PaletteBucket palette_bucket = palette_buckets[palette_index]; // color->int
 
 		for (uint64_t y = 0; y < 8; y++) {
 			std::array< glm::u8vec4, 8 > tile_row = tile[y];
@@ -318,17 +364,26 @@ void process_tiles(PPU466* ppu) {
 			uint8_t row_bit_1 = 0;
 			for (uint64_t x = 0; x < 8; x++) {
 				glm::u8vec4 color = tile_row[x];
-				uint8_t palette_idx = palette_bucket[color];
+				// uint32_t color_bytes = (tile_row[x][3] << 24) + (tile_row[x][2] << 16) + (tile_row[x][1] << 8) + tile_row[x][0];
+
+				uint8_t palette_idx = 0;
+				for (uint8_t i = 0; i < palette_bucket.size(); i++)
+					if (color_compare(color, palette_bucket[i]) == 0)
+						palette_idx = i;
+				// printf("Mapped color (%zu, %zu) -> palette index %u\n", x, y, palette_idx);
+
 				// (x,y) -> color -> palette_idx (from PaletteBucket)
 				row_bit_0 += (palette_idx % 2) << (7 - x);
 				row_bit_1 += (palette_idx / 2) << (7 - x);
 			}
-			(*ppu).tile_table[t].bit0[y] = row_bit_0;
-			(*ppu).tile_table[t].bit1[y] = row_bit_1;
+			ppu.tile_table[t].bit0[y] = row_bit_0;
+			ppu.tile_table[t].bit1[y] = row_bit_1;
 		}
+		// printf("\n");
 	}
+
 }
-void process_palettes(PPU466* ppu) {
+void process_palettes() {
 	/*********************************************************************************
 	 * PALETTES
 	 * Palettes are also pngs, use load_png to convert to color format.
@@ -337,21 +392,23 @@ void process_palettes(PPU466* ppu) {
 	 *  as that marks transparency)
 	 *********************************************************************************/
 	glm::uvec2 *palette_sheet_size = new glm::uvec2(4, 8);
-	std::vector< glm::u8vec4 > *palette_data;
-	load_save_png:load_png("assets/palettes/palettes.png", palette_sheet_size, palette_data, OriginLocation::UpperLeftOrigin);
-	for (uint64_t i = 0; i < (*palette_data).size(); i++) {
+	std::vector< glm::u8vec4 > palette_data;
+
+	load_png("assets/palettes.png", palette_sheet_size, &palette_data, OriginLocation::UpperLeftOrigin);
+	for (uint64_t i = 0; i < palette_data.size(); i++) {
 		uint64_t pal_tbl_idx = i / 4;
 		uint64_t pal_idx = i % 4;
 
-		if (pal_idx == 0 && (*palette_data)[i][0] == 0xee && (*palette_data)[i][1] == 0xee && (*palette_data)[i][2] == 0xee)
-			(*ppu).palette_table[pal_tbl_idx][0] = {0x00, 0x00, 0x00, 0x00};
+		if (pal_idx == 0 && palette_data[i][0] == 0xee && palette_data[i][1] == 0xee && palette_data[i][2] == 0xee)
+			ppu.palette_table[pal_tbl_idx][0] = {0x00, 0x00, 0x00, 0x00};
 		else
-			(*ppu).palette_table[pal_tbl_idx][pal_idx] = (*palette_data)[i];
+			ppu.palette_table[pal_tbl_idx][pal_idx] = palette_data[i];
 	}
+
 }
-void create_player_sprites(std::array<PPU466::Sprite, 4> playerSprites) {
-	for (int i = 0; i < 4; i++)
-		playerSprites[0].index = 0; // head, body, gemstar, reticle
+void create_player_sprites() {
+	for (uint8_t i = 0; i < 4; i++)
+		playerSprites[i].index = i; // head, body, gemstar, reticle
 
 	playerSprites[0].attributes = 0x00;
 	playerSprites[1].attributes = 0x00;
@@ -361,13 +418,14 @@ void create_player_sprites(std::array<PPU466::Sprite, 4> playerSprites) {
 
 PlayMode::PlayMode() {
 	//Asset Pipeline
-	process_tiles(&ppu);
-	process_palettes(&ppu);
+	process_tiles();
+	process_palettes();
+
 
 	/**********************************
 	 * Sprite (entity) lists
 	 **********************************/
-	create_player_sprites(playerSprites);
+	create_player_sprites();
 	for (int i = 0; i < 4; i++)
 		ppu.sprites[i] = playerSprites[i];
 	
@@ -417,7 +475,7 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 
 void PlayMode::update(float elapsed) {
 
-	constexpr float PlayerSpeed = 30.0f;
+	// constexpr float PlayerSpeed = 30.0f;
 	// if (left.pressed) player_at.x -= PlayerSpeed * elapsed;
 	// if (right.pressed) player_at.x += PlayerSpeed * elapsed;
 	// if (down.pressed) player_at.y -= PlayerSpeed * elapsed;
@@ -440,7 +498,7 @@ void PlayMode::update(float elapsed) {
 
 	if (player.gameObject.position[1] < GROUND_LEVEL + player.gameObject.height_radius[1]) {
 		player.airborne = false;
-		player.gameObject.position[1] = GROUND_LEVEL + player.gameObject.height_radius[1];
+		player.gameObject.position[1] = (float) GROUND_LEVEL + player.gameObject.height_radius[1];
 	}
 
 	//reset button press counters:
@@ -455,16 +513,19 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 
 	uint32_t bg_size = PPU466::BackgroundWidth * PPU466::BackgroundHeight;
 	for (uint32_t t = 0; t < bg_size - 256; t++) {
-		ppu.background[t] = (1 << 8) + 28; //0x011C;
+		ppu.background[t] = 0b0000000100011100; //0x011C;
 	}
 	for (uint32_t t = bg_size - 256; t < bg_size; t++) {
-		ppu.background[t] = (1 << 8) + 29; //0x011D;
+		ppu.background[t] = 0b0000000100011101; //0x011D;
 	}
 
-	playerSprites[0].x = player.gameObject.position[0] - player.gameObject.width_radius[0];
-	playerSprites[0].y = player.gameObject.position[1] + 1;
-	playerSprites[1].x = player.gameObject.position[0] - player.gameObject.width_radius[0];
-	playerSprites[1].y = player.gameObject.position[1] - player.gameObject.height_radius[1];
+	playerSprites[0].x = uint8_t(player.gameObject.position[0] - player.gameObject.width_radius[0]);
+	playerSprites[0].y = uint8_t(player.gameObject.position[1] + 1);
+	playerSprites[1].x = uint8_t(player.gameObject.position[0] - player.gameObject.width_radius[0]);
+	playerSprites[1].y = uint8_t(player.gameObject.position[1] - player.gameObject.height_radius[1]);
+
+	// set to playerSprites 2 based on active
+	// set to playerSprites 3 to mouse
 
 	/******************************************************************
 	 * TODO: Things to draw:

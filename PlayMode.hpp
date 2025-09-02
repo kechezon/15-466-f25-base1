@@ -5,6 +5,11 @@
 
 #include <vector>
 #include <deque>
+#include <unordered_set>
+#include <unordered_map>
+
+typedef std::array< std::array< glm::u8vec4 , 8 >, 8 > ColoredTile;
+typedef std::vector< glm::u8vec4 > PaletteBucket; // color as a number to palette bucket index
 
 struct PlayMode : Mode {
 	PlayMode();
